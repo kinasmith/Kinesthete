@@ -5,6 +5,7 @@
 #include <Wire.h>
 #include <SPI.h>
 #include <SD.h>
+#include <EEPROM.h>
 
 //Initialize Audio Library Objects
 AudioSynthWaveformSine   mod1_sine;
@@ -60,6 +61,8 @@ long _pos0 = 0;
 int pos0_counter = 0;
 int pos0_state = 0;
 int pos0_last_state = 0;
+int switch0Pin = 5;
+Bounce switch0 = Bounce(switch0Pin, 5); 
 
 Encoder enc1(27, 30);
 long pos1 = 0;
@@ -67,6 +70,8 @@ long _pos1 = 0;
 int pos1_counter = 0;
 int pos1_state = 0;
 int pos1_last_state;
+int switch1Pin = 4;
+Bounce switch1 = Bounce(switch1Pin, 5); 
 
 Encoder enc2(26, 31);
 long pos2 = 0;
@@ -74,6 +79,8 @@ long _pos2 = 0;
 int pos2_counter = 0;
 int pos2_state = 0;
 int pos2_last_state;
+int switch2Pin = 3;
+Bounce switch2 = Bounce(switch2Pin, 5); 
 
 Encoder enc3(7, 6);
 long pos3 = 0;
@@ -81,21 +88,13 @@ long _pos3 = 0;
 int pos3_counter = 0;
 int pos3_state = 0;
 int pos3_last_state;
-int rot = 4; //number of rotations on control encoders
+int switch3Pin = 2;
+Bounce switch3 = Bounce(switch3Pin, 5); 
+int rot = 2.5; //number of rotations on control encoders. 96 (ppr) * 2.5 = 240
 
 Encoder encFreq(25,24);
 long posFreq = 0;
 long oldPosFreq = 0;
-
-//Declare Switch Pins and De-Bouncing
-int switch0Pin = 5;
-int switch1Pin = 4;
-int switch2Pin = 3;
-int switch3Pin = 2;
-Bounce switch0 = Bounce(switch0Pin, 5); 
-Bounce switch1 = Bounce(switch1Pin, 5); 
-Bounce switch2 = Bounce(switch2Pin, 5); 
-Bounce switch3 = Bounce(switch3Pin, 5); 
 
 //Global Synthesis Variables
 float master_volume = 0.5;
@@ -140,17 +139,16 @@ float _pS2;
 //---------- LED Control ----------------//
 char colors[] = {
   'r', 'g', 'b'};
-int e0r_val = (96*rot)/2; //master volue
-int e0g_val, e0b_val;
-int e1r_val = linlin(0, 0, 1, 0, 96*rot); //osc1_xFade
-int e1g_val =  linlin(0.2, 0, 2, 0, 96*rot); //osc1_mod_offset
-int e1b_val = linlin(2, 0, 3, 0, 96*rot); //osc1_mod_amplitude
-int e2r_val = linlin(1, 0, 1, 0, 96*rot); //osc2_xFade
-int e2g_val =  linlin(1, 0, 2, 0, 96*rot); //osc2_mod_offset
-int e2b_val = linlin(2, 0, 3, 0, 96*rot); //osc2_mod_amplitude
-int e3r_val = 0;
-int e3g_val;
-int e3b_val = 96*rot;
+
+int e0r_val, e0g_val, e0b_val,
+e1r_val, e1g_val, e1b_val,
+e2r_val, e2g_val, e2b_val,
+e3r_val, e3g_val, e3b_val;
+
+int presetNumber = 0;
+int presetWritten = 0;
+long switch0_timer = 0;
+
 
 void setup(void) {
   Serial1.begin(9600);
@@ -175,43 +173,33 @@ void setup(void) {
   car2_sine.amplitude(0.5);
   mixer.gain(1, 0.5);
 
-
   //---------- Load-up Preset Values ----------------// 
-
-  //write all LED's to RED to indicate pitch needs to be set
-  ledSet(0, 'b', 4095);
-  enc0.write(e0r_val);
-  ledSet(0, 'r', 4095/2);
-  enc1.write(e1r_val);
-  ledSet(1, 'r', 4095/2);
-  enc2.write(e2r_val);
-  ledSet(2, 'r', 4095/2);
-  enc3.write(e2b_val);
-  ledSetEnc(3, 0, abs(map(e3b_val, 0, 96*rot, 0, 4095)-4095), map(e3b_val, 0, 96*rot, 0, 4095));
-  /*
-  enc0.write(40);
-   enc1.write(96*rot/2);
-   enc2.write(96*rot);
-   
-   if(osc2_follow){
-   ledSet(2, 'r', 1500); 
-   ledSet(2, 'b', 0);
-   }
-   else {
-   ledSet(2, 'r', 0); 
-   ledSet(2, 'b', 1000);
-   }
-   */
+  recallPreset(presetNumber);
 }
 
 void loop() {
   //---------- Switch 0 Functions ----------------// 
   switch0.update();
-  if(switch0.read()) {
-    encFreq.write(0); 
-    //write all LED's LOW to indicate Pitch is Set
-    ledSet(0, 'b', 0);
-  } 
+  pos0_state = switch0.read();
+  if(pos0_state != pos0_last_state) {
+    if(pos0_state == HIGH) {
+      switch0_timer = millis();
+    }
+  }
+  if(pos0_state == HIGH && millis() - switch0_timer > 1000) {
+    if(!presetWritten) {
+      writePreset(presetNumber);
+      presetWritten = 1;
+    }
+  }
+  if(pos0_state == LOW && pos0_last_state == HIGH) {
+    if(!presetWritten) {
+      recallPreset(presetNumber);
+    }
+    presetWritten = 0;
+  }
+  pos0_last_state = pos0_state;
+
   //---------- Switch 1 Functions ----------------// 
   //set values on switches
   switch1.update();
@@ -286,6 +274,11 @@ void loop() {
   }
   pos3_last_state = pos3_state;
 
+  //set root Pitch
+  if(switch1.read() && switch2.read()) {
+    encFreq.write(0); 
+  }
+
   //---------- Pressure Strip Inputs ----------------// 
   pS1 = analogRead(pS1_pin); 
   if(pS1 != _pS1) {
@@ -312,14 +305,40 @@ void loop() {
   //---------- Encoder 0 Functions ----------------// 
   pos0 = enc0.read();
   if(pos0 < 0) enc0.write(0);
-  if(pos0 > 96*rot) enc0.write(96*rot);
+  if(pos0 > 64) enc0.write(64); 
   if(pos0 != _pos0) {
     _pos0 = pos0;
     e0r_val = pos0;
-    master_volume = linlin(e0r_val, 0, 96*rot, 0, 1);
-    audioShield.volume(master_volume);
-    ledSet(0, 'r', linexp(e0r_val, 0, 96*rot, 0.1, 4095));
-    //Put things to do in here
+    presetNumber = int(e0r_val/16);
+    switch(presetNumber) {
+    case 0:
+      ledSetEnc(0, 4095, 0, 0);
+      break;
+    case 1:
+      ledSetEnc(0, 0, 4095, 0);
+      break;
+    case 2:
+      ledSetEnc(0, 0, 0, 4095);
+      break;
+    case 3:
+      ledSetEnc(0, 4095, 4095, 4095);
+      break;
+    case 4:
+      ledSetEnc(0, 0, 4095, 4095);
+      break;
+    case 5:
+      ledSetEnc(0, 4095, 4095, 4095);
+      break;
+    case 6:
+      ledSetEnc(0, 0, 0, 4095);
+      break;
+    case 7:
+      ledSetEnc(0, 4095, 0, 4095);
+      break;
+    case 8:
+      ledSetEnc(0, 4095, 4095, 4095);
+      break;
+    }
   }
   //---------- Encoder 1 Functions ----------------// 
   //red is crossfade values from 0 to 1
@@ -351,7 +370,6 @@ void loop() {
       mod1_mix.gain(1, abs(mod1_mix_pos-1)*mod1_amplitude);
       ledSetEnc(1, 0, 0, map(e1b_val, 0, 96*rot, 0, 4095));
       break;
-
     }
   }
   //---------- Encoder 2 Functions ----------------// 
@@ -527,33 +545,289 @@ void ledSetEnc(int enc, int r, int g, int b) {
   Serial1.print(" ");
   Serial1.print(b);
   Serial1.print(".");
+}
+
+void recallPreset(int presetNum) {
+  ledSetEnc(0, 0, 0, 0);
+  ledSetEnc(1, 0, 0, 0);
+  ledSetEnc(2, 0, 0, 0);
+  ledSetEnc(3, 0, 0, 0);
+  int addr = 0;
+  int addressOffset = presetNum * 16;
+  addr += addressOffset; 
+  //recall Values
+  // e0r_val = EEPROM.read(addr);
+  addr++;
+  // e0g_val = EEPROM.read(addr);
+  addr++;
+  // e0b_val = EEPROM.read(addr);
+  addr++;
+  e1r_val = EEPROM.read(addr);
+  addr++;
+  e1g_val = EEPROM.read(addr);
+  addr++;
+  e1b_val = EEPROM.read(addr);
+  addr++;
+  e2r_val = EEPROM.read(addr);
+  addr++;
+  e2g_val = EEPROM.read(addr);
+  addr++;
+  e2b_val = EEPROM.read(addr);
+  addr++;
+  e3r_val = EEPROM.read(addr);
+  addr++;
+  e3g_val = EEPROM.read(addr);
+  addr++;
+  e3b_val = EEPROM.read(addr);
+  addr++;
+  pos0_counter = EEPROM.read(addr);
+  addr++;
+  pos1_counter = EEPROM.read(addr);
+  addr++;
+  pos2_counter = EEPROM.read(addr);
+  addr++;
+  pos3_counter = EEPROM.read(addr);
+  addr++;
+  osc2_follow = pos3_counter;
+
+  //push Values
+  //------------------ENCODER 0-----------------------
+  switch(presetNum) {
+  case 0:
+    ledSetEnc(0, 4095, 0, 0);
+    break;
+  case 1:
+    ledSetEnc(0, 0, 4095, 0);
+    break;
+  case 2:
+    ledSetEnc(0, 0, 0, 4095);
+    break;
+  case 3:
+    ledSetEnc(0, 4095, 4095, 4095);
+    break;
+  case 4:
+    ledSetEnc(0, 0, 4095, 4095);
+    break;
+  case 5:
+    ledSetEnc(0, 4095, 4095, 4095);
+    break;
+  case 6:
+    ledSetEnc(0, 0, 0, 4095);
+    break;
+  case 7:
+    ledSetEnc(0, 4095, 0, 4095);
+    break;
+  case 8:
+    ledSetEnc(0, 4095, 4095, 4095);
+    break;
+  }
+  //------------------ENCODER 1-----------------------
+  mod1_mix_pos = linlin(e1r_val, 0, 96*rot, 0, 1); //map values
+  mod1_mix.gain(0, mod1_mix_pos*mod1_amplitude); //set values
+  mod1_mix.gain(1, abs(mod1_mix_pos-1)*mod1_amplitude);
+  ledSetEnc(1, map(e1r_val, 0, 96*rot, 0, 4095), 0, 0);
+
+  mod1_freq = linlin(e1g_val, 0, 96*rot, 0, 2);
+  ledSetEnc(1, 0, map(e1g_val, 0, 96*rot, 0, 4095), 0);
+
+  mod1_amplitude = linlin(e1b_val, 0, 96*rot, 0, 3);
+  mod1_mix.gain(0, mod1_mix_pos*mod1_amplitude); //set values
+  mod1_mix.gain(1, abs(mod1_mix_pos-1)*mod1_amplitude);
+  ledSetEnc(1, 0, 0, map(e1b_val, 0, 96*rot, 0, 4095));
+
+  switch (pos1_counter) {
+  case 0:
+    enc1.write(e1r_val);
+    break;
+  case 1:
+    enc1.write(e1g_val);
+    break;
+  case 2:
+    enc1.write(e1b_val);
+    break;
+  }
+
+
+  //------------------ENCODER 2-----------------------
+  mod2_mix_pos = linlin(e2r_val, 0, 96*rot, 0, 1);
+  mod2_mix.gain(0, mod2_mix_pos*mod2_amplitude);
+  mod2_mix.gain(1, abs(mod2_mix_pos-1)*mod2_amplitude);
+  ledSetEnc(2, map(e2r_val, 0, 96*rot, 0, 4095), 0, 0);
+
+  mod2_freq = linlin(e2g_val, 0, 96*rot, 0, 2);
+  ledSetEnc(2, 0, map(e2g_val, 0, 96*rot, 0, 4095), 0);
+
+  mod2_amplitude = linlin(e2b_val, 0, 96*rot, 0, 1.5);
+  mod2_mix.gain(0, mod2_mix_pos*mod2_amplitude);
+  mod2_mix.gain(1, abs(mod2_mix_pos-1)*mod2_amplitude);
+  ledSetEnc(2, 0, 0, map(e2b_val, 0, 96*rot, 0, 4095));
+
+  switch (pos2_counter) {
+  case 0:
+    enc2.write(e2r_val);
+    break;
+  case 1:
+    enc2.write(e2g_val);
+    break;
+  case 2:   
+    enc2.write(e2b_val);
+    break;
+  }
+
+  //------------------ENCODER 3-----------------------
+  osc2_midi = linlin(e3r_val, 0, 96*rot, 20, 100);
+  ledSetEnc(3, map(e3r_val, 0, 96*rot, 0, 4095),abs(map(e3r_val, 0, 96*rot, 0, 4095)-4095), 0);
+
+  osc2_offset = linlin(e3b_val, 0, 96*rot, 0, 24) - 12;
+  ledSetEnc(3, 0, abs(map(e3b_val, 0, 96*rot, 0, 4095)-4095), map(e3b_val, 0, 96*rot, 0, 4095));
+
+  switch (pos3_counter) {
+  case 0:
+    enc3.write(e3r_val);
+    break;
+  case 1:
+    enc3.write(e3b_val);
+    break;
+  }
+  //Write Encoder Positions
+  //enc0.write(e0r_val);
+  //enc1.write(e1r_val);
+  // enc2.write(e2r_val);
+  // enc3.write(e3r_val);
+
+  Serial.print("enc1r: ");
+  Serial.println(e1r_val);
+  Serial.print("enc1g: ");
+  Serial.println(e1g_val);
+  Serial.print("enc1b: ");
+  Serial.println(e1b_val);
+  Serial.print("enc2r: ");
+  Serial.println(e2r_val);
+  Serial.print("enc2g: ");
+  Serial.println(e2g_val);
+  Serial.print("enc2b: ");
+  Serial.println(e2b_val);
+  Serial.print("enc3r: ");
+  Serial.println(e3r_val);
+  Serial.print("enc3g: ");
+  Serial.println(e3g_val);
+  Serial.print("enc3b: ");
+  Serial.println(e3b_val);
+  Serial.print("pos0cnt: ");
+  Serial.println(pos0_counter);
+  Serial.print("pos1cnt: ");
+  Serial.println(pos1_counter);
+  Serial.print("pos2cnt: ");
+  Serial.println(pos2_counter);
+  Serial.print("pos3cnt: ");
+  Serial.println(pos3_counter);
+  Serial.print("addr: ");
+  Serial.println(addr);
+  Serial.println("--------------------------------");
+}
+
+void writePreset(int presetNum) {
+  ledSetEnc(0, 0, 0, 0);
+  delay(100);
+  int addressOffset = presetNum * 16;
+  writeEEPROM(addressOffset);
+  switch(presetNum) {
+  case 0:
+    ledSetEnc(0, 4095, 0, 0);
+    break;
+  case 1:
+    ledSetEnc(0, 0, 4095, 0);
+    break;
+  case 2:
+    ledSetEnc(0, 0, 0, 4095);
+    break;
+  case 3:
+    ledSetEnc(0, 4095, 4095, 4095);
+    break;
+  case 4:
+    ledSetEnc(0, 0, 4095, 4095);
+    break;
+  case 5:
+    ledSetEnc(0, 4095, 4095, 4095);
+    break;
+  case 6:
+    ledSetEnc(0, 0, 0, 4095);
+    break;
+  case 7:
+    ledSetEnc(0, 4095, 0, 4095);
+    break;
+  case 8:
+    ledSetEnc(0, 4095, 4095, 4095);
+    break;
+  }
 
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+void writeEEPROM(int addrOffset) {
+  int addr = 0;
+  addr += addrOffset; 
+  // EEPROM.write(addr, e0r_val);
+  addr++;
+  // EEPROM.write(addr, e0g_val);
+  addr++;
+  // EEPROM.write(addr, e0b_val);
+  addr++;
+  EEPROM.write(addr, e1r_val);
+  addr++;
+  EEPROM.write(addr, e1g_val);
+  addr++;
+  EEPROM.write(addr, e1b_val);
+  addr++;
+  EEPROM.write(addr, e2r_val);
+  addr++;
+  EEPROM.write(addr, e2g_val);
+  addr++;
+  EEPROM.write(addr, e2b_val);
+  addr++;
+  EEPROM.write(addr, e3r_val);
+  addr++;
+  EEPROM.write(addr, e3g_val);
+  addr++;
+  EEPROM.write(addr, e3b_val);
+  addr++;
+  EEPROM.write(addr, pos0_counter);
+  addr++;
+  EEPROM.write(addr, pos1_counter);
+  addr++;
+  EEPROM.write(addr, pos2_counter);
+  addr++;
+  EEPROM.write(addr, pos3_counter);
+  addr++;
+  Serial.print("enc1r: ");
+  Serial.println(e1r_val);
+  Serial.print("enc1g: ");
+  Serial.println(e1g_val);
+  Serial.print("enc1b: ");
+  Serial.println(e1b_val);
+  Serial.print("enc2r: ");
+  Serial.println(e2r_val);
+  Serial.print("enc2g: ");
+  Serial.println(e2g_val);
+  Serial.print("enc2b: ");
+  Serial.println(e2b_val);
+  Serial.print("enc3r: ");
+  Serial.println(e3r_val);
+  Serial.print("enc3g: ");
+  Serial.println(e3g_val);
+  Serial.print("enc3b: ");
+  Serial.println(e3b_val);
+  Serial.print("pos0cnt: ");
+  Serial.println(pos0_counter);
+  Serial.print("pos1cnt: ");
+  Serial.println(pos1_counter);
+  Serial.print("pos2cnt: ");
+  Serial.println(pos2_counter);
+  Serial.print("pos3cnt: ");
+  Serial.println(pos3_counter);
+  Serial.print("addr: ");
+  Serial.println(addr);
+  Serial.println("--------------------------------");
+}
 
 
 

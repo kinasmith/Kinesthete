@@ -426,7 +426,7 @@ void loop() {
 
   //---------- Encoder FREQUENCY Functions ----------------// 
   posFreq = encFreq.read();
-  osc1_midi = linlin(posFreq, 0, 4096*12, 36, 100);
+  osc1_midi = linlin(posFreq, 0, 4096*12, 48, 100); //CHANGE: was 36, 100
   osc1_freq = midicps(osc1_midi);
 
 

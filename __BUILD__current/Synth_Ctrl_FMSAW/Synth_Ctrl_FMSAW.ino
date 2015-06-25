@@ -97,7 +97,7 @@ long posFreq = 0;
 long oldPosFreq = 0;
 
 //Global Synthesis Variables
-float master_volume = 0.5;
+float master_volume = 0.9;
 
 //---------- Oscillator 1 ----------------//
 float osc1_freq; //Master OSC frequency
@@ -160,18 +160,18 @@ void setup(void) {
 
   AudioMemory(120);
   audioShield.enable();
-  audioShield.volume(0.6);
+  audioShield.volume(1);
 
   //---------- Setup OSC1 ----------------//
   mod1_sine.amplitude(0.7);
   mod1_saw.begin(0.7, 0, WAVEFORM_SAWTOOTH);
-  mixer.gain(0, 0.5);
+  mixer.gain(0, 1);
 
   //---------- Setup OSC2 ----------------//  
   mod2_sine.amplitude(0.7);
   mod2_square.begin(0.7, 0, WAVEFORM_SQUARE);
-  car2_sine.amplitude(0.5);
-  mixer.gain(1, 0.5);
+  car2_sine.amplitude(0.7);
+  mixer.gain(1, 0.4);
 
   //---------- Load-up Preset Values ----------------// 
   recallPreset(presetNumber);
@@ -422,8 +422,6 @@ void loop() {
     }
   }
 
-
-
   //---------- Encoder FREQUENCY Functions ----------------// 
   posFreq = encFreq.read();
   osc1_midi = linlin(posFreq, 0, 4096*12, 48, 100); //CHANGE: was 36, 100
@@ -442,13 +440,13 @@ void loop() {
   car1_sine.frequency(osc1_freq);
   mod1_sine.frequency(osc1_freq*mod1_freq);
   mod1_saw.frequency(osc1_freq*mod1_freq);
-  mod1_dc.amplitude((osc1_amp*mod1_dc_val), 1);
+  mod1_dc.amplitude((osc1_amp/2)*mod1_dc_val, 1);
   car1_dc.amplitude(osc1_amp, 1);
 
   car2_sine.frequency(osc2_freq);
   mod2_sine.frequency(osc2_freq*mod2_freq);
   mod2_square.frequency(osc2_freq*mod2_freq);
-  mod2_dc.amplitude(osc2_amp*mod2_dc_val, 1);
+  mod2_dc.amplitude((osc2_amp/2)*mod2_dc_val, 1);
   car2_dc.amplitude(osc2_amp, 1);
 
 }

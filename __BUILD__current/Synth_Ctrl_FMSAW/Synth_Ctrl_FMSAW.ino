@@ -6,6 +6,12 @@
 #include <SPI.h>
 #include <SD.h>
 #include <EEPROM.h>
+#include <math.h>
+#include <MovingAvarageFilter.h>
+
+MovingAvarageFilter average_amp1(20);
+MovingAvarageFilter average_amp2(20);
+
 
 //Initialize Audio Library Objects
 AudioSynthWaveformSine   mod1_sine;
@@ -97,7 +103,7 @@ long posFreq = 0;
 long oldPosFreq = 0;
 
 //Global Synthesis Variables
-float master_volume = 0.5;
+float master_volume = 0.9;
 
 //---------- Oscillator 1 ----------------//
 float osc1_freq; //Master OSC frequency
@@ -119,7 +125,7 @@ float osc2_offset = 0; //offset between OSC1 and OSC2 when in FollowMode
 int osc2_follow = 1; //boolean for pitch Following
 
 //---------- OSC1 Control Inputs ----------------//
-int osc1_amp_pin = A13; //amplitude for OSC1
+int osc1_amp_pin = A12; //amplitude for OSC1
 float osc1_amp_val; //amp1Read
 float _osc1_amp_val; //oldAmp1
 float osc1_amp; //amp1
@@ -128,7 +134,7 @@ float pS1; //Pressure Strips
 float _pS1;
 
 //---------- OSC2 Control Inputs ----------------//
-int osc2_amp_pin = A12; //amplitude for OSC2
+int osc2_amp_pin = A13; //amplitude for OSC2
 float osc2_amp_val;
 float osc2_amp; 
 float _osc2_amp_val;
@@ -160,18 +166,18 @@ void setup(void) {
 
   AudioMemory(120);
   audioShield.enable();
-  audioShield.volume(0.6);
+  audioShield.volume(1);
 
   //---------- Setup OSC1 ----------------//
   mod1_sine.amplitude(0.7);
   mod1_saw.begin(0.7, 0, WAVEFORM_SAWTOOTH);
-  mixer.gain(0, 0.5);
+  mixer.gain(0, 0.9);
 
   //---------- Setup OSC2 ----------------//  
   mod2_sine.amplitude(0.7);
   mod2_square.begin(0.7, 0, WAVEFORM_SQUARE);
-  car2_sine.amplitude(0.5);
-  mixer.gain(1, 0.5);
+  car2_sine.amplitude(0.7);
+  mixer.gain(1, 0.3);
 
   //---------- Load-up Preset Values ----------------// 
   recallPreset(presetNumber);
@@ -294,14 +300,28 @@ void loop() {
   osc1_amp_val = analogRead(osc1_amp_pin);
   if(osc1_amp_val != _osc1_amp_val) {
     _osc1_amp_val = osc1_amp_val;
-    osc1_amp = constrain((linexp(osc1_amp_val, 40.0, 700, 0.1, 1)-0.1), 0, 1);
+    //osc1_amp = constrain((linexp(osc1_amp_val, 40.0, 700, 0.1, 1)-0.1), 0, 1);
+    osc1_amp = constrain((fscale(osc1_amp_val, 70, 970, 1, 0, -10)), 0, 1); //changed this for new amplitude input
+    osc1_amp = average_amp1.process(osc1_amp);  
   }
 
   osc2_amp_val = analogRead(osc2_amp_pin);
   if(osc2_amp_val != _osc2_amp_val) {
     _osc2_amp_val = osc2_amp_val;
-    osc2_amp = constrain((linexp(osc2_amp_val, 40.0, 700, 0.1, 1)-0.1), 0, 1);
+    //osc2_amp = constrain((linexp(osc2_amp_val, 40.0, 700, 0.1, 1)-0.1), 0, 1); //changed this for new amplitude input
+   // osc2_amp = constrain((linexp(osc2_amp_val, 100, 990, 1.4, 0.1)-0.1), 0, 1); //changed this for new amplitude input
+    osc2_amp = constrain((fscale(osc2_amp_val, 160, 960, 1, 0, -10)), 0, 1); //changed this for new amplitude input
+    osc2_amp = average_amp2.process(osc2_amp);  
   }
+  /*
+  Serial.print(osc1_amp_val);
+  Serial.print(": ");
+  Serial.print(osc1_amp);
+  Serial.print(", ");
+  Serial.print(osc2_amp_val);
+  Serial.print(": ");
+  Serial.println(osc2_amp);
+  */
   //---------- Encoder 0 Functions ----------------// 
   pos0 = enc0.read();
   if(pos0 < 0) enc0.write(0);
@@ -422,8 +442,6 @@ void loop() {
     }
   }
 
-
-
   //---------- Encoder FREQUENCY Functions ----------------// 
   posFreq = encFreq.read();
   osc1_midi = linlin(posFreq, 0, 4096*12, 48, 100); //CHANGE: was 36, 100
@@ -442,18 +460,21 @@ void loop() {
   car1_sine.frequency(osc1_freq);
   mod1_sine.frequency(osc1_freq*mod1_freq);
   mod1_saw.frequency(osc1_freq*mod1_freq);
-  mod1_dc.amplitude((osc1_amp*mod1_dc_val), 1);
+  mod1_dc.amplitude((osc1_amp/2)*mod1_dc_val, 1);
   car1_dc.amplitude(osc1_amp, 1);
 
   car2_sine.frequency(osc2_freq);
   mod2_sine.frequency(osc2_freq*mod2_freq);
   mod2_square.frequency(osc2_freq*mod2_freq);
-  mod2_dc.amplitude(osc2_amp*mod2_dc_val, 1);
+  mod2_dc.amplitude((osc2_amp/2)*mod2_dc_val, 1);
   car2_dc.amplitude(osc2_amp, 1);
 
 }
 
 //---------- ---------- Utility Functions ---------------- ----------------// 
+/*-------------------------------------------------------------------
+ * Exponention Scale
+ *-------------------------------------------------------------------*/
 float linexp (float x, float a, float b, float c, float d)
 //intput, input low, input high, output low, output high
 {
@@ -461,7 +482,57 @@ float linexp (float x, float a, float b, float c, float d)
   if (x >= b) return d;
   return pow(d/c, (x-a)/(b-a)) * c;
 }
+/*-------------------------------------------------------------------
+ * LogScale!
+ *-------------------------------------------------------------------*/
+float fscale( float inputValue, float originalMin, float originalMax, float newBegin, float newEnd,  float curve){
+  //Input, Input LOW, input HIGH, output LOW, output HIGH, Scale
+  float OriginalRange = 0;
+  float NewRange = 0;
+  float zeroRefCurVal = 0;
+  float normalizedCurVal = 0;
+  float rangedValue = 0;
+  boolean invFlag = 0;
+  // condition curve parameter
+  // limit range
+  if (curve > 10) curve = 10;
+  if (curve < -10) curve = -10;
+  curve = (curve * -.1) ; // - invert and scale - this seems more intuitive - postive numbers give more weight to high end on output 
+  curve = pow(10, curve); // convert linear scale into lograthimic exponent for other pow function
+  // Check for out of range inputValues
+  if (inputValue < originalMin) {
+    inputValue = originalMin;
+  }
+  if (inputValue > originalMax) {
+    inputValue = originalMax;
+  }
+  // Zero Reference the values
+  OriginalRange = originalMax - originalMin;
+  if (newEnd > newBegin){ 
+    NewRange = newEnd - newBegin;
+  }
+  else {
+    NewRange = newBegin - newEnd; 
+    invFlag = 1;
+  }
+  zeroRefCurVal = inputValue - originalMin;
+  normalizedCurVal  =  zeroRefCurVal / OriginalRange;   // normalize to 0 - 1 float
+  // Check for originalMin > originalMax  - the math for all other cases i.e. negative numbers seems to work out fine 
+  if (originalMin > originalMax ) {
+    return 0;
+  }
+  if (invFlag == 0){
+    rangedValue =  (pow(normalizedCurVal, curve) * NewRange) + newBegin;
+  }
+  else { // invert the ranges  
+    rangedValue =  newBegin - (pow(normalizedCurVal, curve) * NewRange); 
+  }
+  return rangedValue;
+}
 
+/*-------------------------------------------------------------------
+ * Linear Scale
+ *-------------------------------------------------------------------*/
 float linlin (float x, float a, float b, float c, float d)
 {
   if (x <= a) return c;

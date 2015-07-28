@@ -321,7 +321,7 @@ void loop() {
   Serial.print(osc2_amp_val);
   Serial.print(": ");
   Serial.println(osc2_amp);
-*/
+  */
   //---------- Encoder 0 Functions ----------------// 
   pos0 = enc0.read();
   if(pos0 < 0) enc0.write(0);
